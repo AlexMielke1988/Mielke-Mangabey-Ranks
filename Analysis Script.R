@@ -4,24 +4,31 @@
 
 # Libraries ---------------------------------------------------------------
 
+### Please note: at the time of writing, Rstan still had problems with R v.4.2.0 and above, and had to be installed using:
+#install.packages("rstan", repos = c("https://mc-stan.org/r-packages/", getOption("repos")))
+
+
 library(tidyverse)
 library(readr)
 library(brms)
 library(bayesplot)
 library(rstanarm)
 library(rstan)
+library(mgcv)
 
+options(mc.cores = parallel::detectCores())
+rstan_options(auto_write = TRUE)
 
 # Parameters --------------------------------------------------------------
-cores <- 8
+cores <- 16
 chains <- 3
-iterations <- 3000
-warmup <- 1500
+iterations <- 4000
+warmup <- 1000
 
 
 # Load Data ---------------------------------------------------------------
 
-mangabey.data <- readRDS('mangabey_data.RDS')
+mangabey.data <- readRDS("~/mangabey_data.RDS")
 
 # Model Specifications ----------------------------------------------------
 ## please see paper for questions regarding the models
@@ -43,38 +50,42 @@ mangabey.data <- readRDS('mangabey_data.RDS')
 ### 'interaction' = interaction term of sender and receiver ranks (rank receiver * rank sender)
 ### 'square.interaction' = squared interaction term of sender and receiver ranks ((rank receiver^2) * rank sender)
 
+mangabey.data$dyad <- sapply(seq_along(mangabey.data$sender), function(x){
+  str_c(sort(c(mangabey.data$sender[x], mangabey.data$receiver[x])), collapse = '_')
+})
+
 form.list <- list(
-  elo.main.raw = "behaviour ~ 1 + z.elo.receiver.raw + z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.main.ordinal = "behaviour ~ 1 + z.elo.receiver.ordinal + z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.main.stan = "behaviour ~ 1 + z.elo.receiver.stan + z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.difference.raw = "behaviour ~ 1 + z.elo.difference.raw + z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.difference.stan = "behaviour ~ 1 + z.elo.difference.stan + z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.difference.ordinal = "behaviour ~ 1 + z.elo.difference.ordinal + z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.absolute_diff.raw = "behaviour ~ 1 + z.abs.elo.difference.raw * z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.absolute_diff.stan = "behaviour ~ 1 + z.abs.elo.difference.stan * z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.absolute_diff.ordinal = "behaviour ~ 1 + z.abs.elo.difference.ordinal * z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.interaction.raw = "behaviour ~ 1 + z.elo.sender.raw * z.elo.receiver.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.interaction.stan = "behaviour ~ 1 + z.elo.sender.stan * z.elo.receiver.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.interaction.ordinal = "behaviour ~ 1 + z.elo.sender.ordinal * z.elo.receiver.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.square_interaction.raw = "behaviour ~ 1 + z.elo.sender.raw * (z.elo.receiver.raw + I(z.elo.receiver.raw^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.square_interaction.stan = "behaviour ~ 1 + z.elo.sender.stan * (z.elo.receiver.stan + I(z.elo.receiver.stan^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  elo.square_interaction.ordinal = "behaviour ~ 1 + z.elo.sender.ordinal * (z.elo.receiver.ordinal + I(z.elo.receiver.ordinal^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  higher_lower = "behaviour ~ 1 + z.elo.sender.stan + higher_lower + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.main.raw = "behaviour ~ 1 + z.david.receiver.raw + z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.main.stan = "behaviour ~ 1 + z.david.receiver.stan + z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.main.ordinal = "behaviour ~ 1 + z.david.receiver.ordinal + z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.difference.raw = "behaviour ~ 1 + z.david.difference.raw + z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.difference.stan = "behaviour ~ 1 + z.david.difference.stan + z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.difference.ordinal = "behaviour ~ 1 + z.david.difference.ordinal + z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.absolute_diff.raw = "behaviour ~ 1 + z.abs.david.difference.raw * z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.absolute_diff.stan = "behaviour ~ 1 + z.abs.david.difference.stan * z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.absolute_diff.ordinal = "behaviour ~ 1 + z.abs.david.difference.ordinal * z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.interaction.raw = "behaviour ~ 1 + z.david.sender.raw * z.david.receiver.raw + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.interaction.stan = "behaviour ~ 1 + z.david.sender.stan * z.david.receiver.stan + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.interaction.ordinal = "behaviour ~ 1 + z.david.sender.ordinal * z.david.receiver.ordinal + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.square_interaction.raw = "behaviour ~ 1 + z.david.sender.raw * (z.david.receiver.raw + I(z.david.receiver.raw^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.square_interaction.stan = "behaviour ~ 1 + z.david.sender.stan * (z.david.receiver.stan + I(z.david.receiver.stan^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)",
-  david.square_interaction.ordinal = "behaviour ~ 1 + z.david.sender.ordinal * (z.david.receiver.ordinal + I(z.david.receiver.ordinal^2)) + (1|year) + (1|sender) + (1|receiver) + offset(log.observation.time)"
+  elo.main.raw = "behaviour ~ 1 + z.elo.receiver.raw + z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.main.ordinal = "behaviour ~ 1 + z.elo.receiver.ordinal + z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.main.stan = "behaviour ~ 1 + z.elo.receiver.stan + z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.difference.raw = "behaviour ~ 1 + z.elo.difference.raw + z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.difference.stan = "behaviour ~ 1 + z.elo.difference.stan + z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.difference.ordinal = "behaviour ~ 1 + z.elo.difference.ordinal + z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.absolute_diff.raw = "behaviour ~ 1 + z.abs.elo.difference.raw * z.elo.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.absolute_diff.stan = "behaviour ~ 1 + z.abs.elo.difference.stan * z.elo.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.absolute_diff.ordinal = "behaviour ~ 1 + z.abs.elo.difference.ordinal * z.elo.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.interaction.raw = "behaviour ~ 1 + z.elo.sender.raw * z.elo.receiver.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.interaction.stan = "behaviour ~ 1 + z.elo.sender.stan * z.elo.receiver.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.interaction.ordinal = "behaviour ~ 1 + z.elo.sender.ordinal * z.elo.receiver.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.nonlinear.raw = "behaviour ~ 1 + t2(z.elo.sender.raw, z.elo.receiver.raw) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.nonlinear.stan = "behaviour ~ 1 + t2(z.elo.sender.stan, z.elo.receiver.stan) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  elo.nonlinear.ordinal = "behaviour ~ 1 + t2(z.elo.sender.ordinal, z.elo.receiver.ordinal) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  higher_lower = "behaviour ~ 1 + z.elo.sender.stan + higher_lower + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.main.raw = "behaviour ~ 1 + z.david.receiver.raw + z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.main.stan = "behaviour ~ 1 + z.david.receiver.stan + z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.main.ordinal = "behaviour ~ 1 + z.david.receiver.ordinal + z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.difference.raw = "behaviour ~ 1 + z.david.difference.raw + z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.difference.stan = "behaviour ~ 1 + z.david.difference.stan + z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.difference.ordinal = "behaviour ~ 1 + z.david.difference.ordinal + z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.absolute_diff.raw = "behaviour ~ 1 + z.abs.david.difference.raw * z.david.sender.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.absolute_diff.stan = "behaviour ~ 1 + z.abs.david.difference.stan * z.david.sender.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.absolute_diff.ordinal = "behaviour ~ 1 + z.abs.david.difference.ordinal * z.david.sender.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.interaction.raw = "behaviour ~ 1 + z.david.sender.raw * z.david.receiver.raw + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.interaction.stan = "behaviour ~ 1 + z.david.sender.stan * z.david.receiver.stan + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.interaction.ordinal = "behaviour ~ 1 + z.david.sender.ordinal * z.david.receiver.ordinal + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.nonlinear.raw = "behaviour ~ 1 + t2(z.david.sender.raw, z.david.receiver.raw) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.nonlinear.stan = "behaviour ~ 1 + t2(z.david.sender.stan, z.david.receiver.stan) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)",
+  david.nonlinear.ordinal = "behaviour ~ 1 + t2(z.david.sender.ordinal, z.david.receiver.ordinal) + (1|year) + (1|sender) + (1|receiver) + (1|dyad) + offset(log.observation.time)"
 )
 
 
@@ -100,16 +111,19 @@ results.agg <- lapply(1:length(form.list), function(x) {
     cores = cores,
     chains = chains,
     seed = 123, 
-    control = list(adapt_delta = 0.99)
+    thin = 10,
+    control = list(adapt_delta = 0.99),
+    save_pars = save_pars(all = TRUE)
   )
 
+  gc()
   # save information and models
   return(list(
     c(
       loglik = mean(as.numeric(logLik(res))),
       loo_R2 = loo_R2(res)[1],
       R2 = bayes_R2(res)[1],
-      loo = loo(res)$estimates[3]
+      loo = loo(res, pointwise = TRUE)$estimates[3]
     ),
     model = res
   ))
@@ -136,8 +150,8 @@ colnames(formula.meta) <- c('rank_variable', 'model_specification', 'standardisa
 
 results.aggression <- bind_cols(results.aggression, formula.meta)
 
-
-
+gc()
+save.image("C:/Users/am261/Desktop/saves.RData")
 
 # Grooming Models -------------------------------------------------------
 
@@ -156,16 +170,18 @@ results.groom <- lapply(1:length(form.list), function(x) {
     cores = cores,
     chains = chains,
     seed = 123, 
-    control = list(adapt_delta = 0.99)
+    thin = 10,
+    control = list(adapt_delta = 0.99),
+    save_pars = save_pars(all = TRUE)
   )
-  
+  gc()
   # save information and models
   return(list(
     c(
       loglik = mean(as.numeric(logLik(res))),
       loo_R2 = loo_R2(res)[1],
       R2 = bayes_R2(res)[1],
-      loo = loo(res)$estimates[3]
+      loo = loo(res, pointwise = TRUE)$estimates[3]
     ),
     model = res
   ))
@@ -191,8 +207,8 @@ formula.meta <- str_split(results.grooming$model, pattern = '[.]') %>%
 colnames(formula.meta) <- c('rank_variable', 'model_specification', 'standardisation')
 
 results.grooming <- bind_cols(results.grooming, formula.meta)
-
-
+gc()
+save.image("C:/Users/am261/Desktop/saves.RData")
 
 # Proximity Models -------------------------------------------------------
 
@@ -211,9 +227,11 @@ results.prox <- lapply(1:length(form.list), function(x) {
     cores = cores,
     chains = chains,
     seed = 123, 
-    control = list(adapt_delta = 0.99)
+    thin = 10,
+    control = list(adapt_delta = 0.99),
+    save_pars = save_pars(all = TRUE)
   )
-  
+  gc()
   # save information and models
   return(list(
     c(
@@ -246,8 +264,8 @@ formula.meta <- str_split(results.proximity$model, pattern = '[.]') %>%
 colnames(formula.meta) <- c('rank_variable', 'model_specification', 'standardisation')
 
 results.proximity <- bind_cols(results.proximity, formula.meta)
-
-
+gc()
+save.image("C:/Users/am261/Desktop/saves.RData")
 
 # Supplant Models -------------------------------------------------------
 
@@ -266,9 +284,11 @@ results.supp <- lapply(1:length(form.list), function(x) {
     cores = cores,
     chains = chains,
     seed = 123, 
-    control = list(adapt_delta = 0.99)
+    thin = 10,
+    control = list(adapt_delta = 0.99),
+    save_pars = save_pars(all = TRUE)
   )
-  
+  gc()
   # save information and models
   return(list(
     c(
@@ -301,4 +321,20 @@ formula.meta <- str_split(results.supplant$model, pattern = '[.]') %>%
 colnames(formula.meta) <- c('rank_variable', 'model_specification', 'standardisation')
 
 results.supplant <- bind_cols(results.supplant, formula.meta)
+gc()
+save.image("C:/Users/am261/Desktop/saves.RData")
+
+
+
+# Plots - Example
+library(ggeffects)
+results.groom[[14]]$model %>% 
+  ggpredict(terms = c('z.elo.sender.stan', 'z.elo.receiver.stan')) %>% 
+  plot(facet = TRUE) + 
+  ggtitle('Nonlinear Model: Grooming') + 
+  ylab('Predicted Grooming Minutes') + 
+  xlab('Sender Rank') + 
+  guides(color=guide_legend(title="Receiver Rank"))
+
+
 
